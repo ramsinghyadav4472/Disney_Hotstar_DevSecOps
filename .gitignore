@@ -36,6 +36,7 @@ Thumbs.db
 
 # Terraform artifacts
 **/.terraform/
+**/.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 crash.log
@@ -46,3 +47,4 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
+

@@ -1,0 +1,300 @@
+---
+# =============================================================================
+# Ansible Playbook: DevSecOps Target Server Setup
+# Description: Installs and configures all DevSecOps tools on EC2 #2
+# Target: Ubuntu 24.04 LTS (t3.small)
+# Tools: Docker, Jenkins, SonarQube (Docker), Trivy, AWS CLI, kubectl,
+#        eksctl, Grafana
+# =============================================================================
+
+- name: Configure DevSecOps Target Server for Hotstar Deployment
+  hosts: target_servers
+  become: true
+
+  tasks:
+
+    # ==========================================================================
+    # SECTION 1: System Update & Base Packages
+    # ==========================================================================
+
+    - name: "[1/9] Update apt package cache"
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: "[1/9] Install base system utilities"
+      apt:
+        name:
+          - curl
+          - wget
+          - git
+          - unzip
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - lsb-release
+          - software-properties-common
+          - fontconfig
+          - openjdk-17-jre
+          - net-tools
+        state: present
+
+    # ==========================================================================
+    # SECTION 2: Docker Installation
+    # ==========================================================================
+
+    - name: "[2/9] Install Docker"
+      apt:
+        name: docker.io
+        state: present
+
+    - name: "[2/9] Start and enable Docker service"
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: "[2/9] Add ubuntu user to docker group"
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: "[2/9] Set docker socket permissions"
+      file:
+        path: /var/run/docker.sock
+        mode: '0666'
+
+    # ==========================================================================
+    # SECTION 3: Jenkins Installation
+    # ==========================================================================
+
+    - name: "[3/9] Add Jenkins GPG key"
+      get_url:
+        url: https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+        dest: /usr/share/keyrings/jenkins-keyring.asc
+        mode: '0644'
+
+    - name: "[3/9] Add Jenkins apt repository"
+      apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/"
+        filename: jenkins
+        state: present
+
+    - name: "[3/9] Install Jenkins"
+      apt:
+        name: jenkins
+        state: present
+        update_cache: yes
+
+    - name: "[3/9] Add jenkins user to docker group"
+      user:
+        name: jenkins
+        groups: docker
+        append: yes
+
+    - name: "[3/9] Start and enable Jenkins service"
+      systemd:
+        name: jenkins
+        state: started
+        enabled: yes
+
+    # ==========================================================================
+    # SECTION 4: SonarQube (via Docker container)
+    # ==========================================================================
+
+    - name: "[4/9] Pull and run SonarQube container"
+      shell: |
+        if docker ps -a --format '{{ '{{' }}.Names{{ '}}' }}' | grep -qw sonar; then
+          echo "SonarQube container already exists"
+        else
+          docker run -d \
+            --name sonar \
+            -p 9000:9000 \
+            --restart always \
+            sonarqube:lts-community
+        fi
+      register: sonar_result
+      changed_when: "'already exists' not in sonar_result.stdout"
+
+    # ==========================================================================
+    # SECTION 5: Trivy Installation
+    # ==========================================================================
+
+    - name: "[5/9] Add Trivy GPG key"
+      shell: |
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+          | gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+      args:
+        creates: /usr/share/keyrings/trivy.gpg
+
+    - name: "[5/9] Add Trivy apt repository"
+      apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb {{ ansible_distribution_release }} main"
+        filename: trivy
+        state: present
+
+    - name: "[5/9] Install Trivy"
+      apt:
+        name: trivy
+        state: present
+        update_cache: yes
+
+    # ==========================================================================
+    # SECTION 6: AWS CLI v2 Installation
+    # ==========================================================================
+
+    - name: "[6/9] Check if AWS CLI is installed"
+      command: aws --version
+      register: awscli_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: "[6/9] Download AWS CLI v2 installer"
+      get_url:
+        url: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+        dest: /tmp/awscliv2.zip
+      when: awscli_check.rc != 0
+
+    - name: "[6/9] Unzip AWS CLI installer"
+      unarchive:
+        src: /tmp/awscliv2.zip
+        dest: /tmp/
+        remote_src: yes
+      when: awscli_check.rc != 0
+
+    - name: "[6/9] Install AWS CLI v2"
+      command: /tmp/aws/install --update
+      when: awscli_check.rc != 0
+
+    - name: "[6/9] Cleanup AWS CLI installer files"
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/awscliv2.zip
+        - /tmp/aws
+      when: awscli_check.rc != 0
+
+    # ==========================================================================
+    # SECTION 7: kubectl Installation
+    # ==========================================================================
+
+    - name: "[7/9] Check if kubectl is installed"
+      command: kubectl version --client --short
+      register: kubectl_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: "[7/9] Install kubectl v1.28"
+      get_url:
+        url: https://dl.k8s.io/release/v1.28.0/bin/linux/amd64/kubectl
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+      when: kubectl_check.rc != 0
+
+    # ==========================================================================
+    # SECTION 8: eksctl Installation
+    # ==========================================================================
+
+    - name: "[8/9] Check if eksctl is installed"
+      command: eksctl version
+      register: eksctl_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: "[8/9] Download and install eksctl"
+      shell: |
+        curl --silent --location \
+          "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz" \
+          | tar xz -C /tmp
+        mv /tmp/eksctl /usr/local/bin/eksctl
+        chmod +x /usr/local/bin/eksctl
+      when: eksctl_check.rc != 0
+
+    # ==========================================================================
+    # SECTION 9: Grafana Installation
+    # ==========================================================================
+
+    - name: "[9/9] Create keyrings directory for Grafana"
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: "[9/9] Add Grafana GPG key"
+      shell: |
+        wget -q -O - https://apt.grafana.com/gpg.key \
+          | gpg --dearmor -o /etc/apt/keyrings/grafana.gpg
+      args:
+        creates: /etc/apt/keyrings/grafana.gpg
+
+    - name: "[9/9] Add Grafana apt repository"
+      apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main"
+        filename: grafana
+        state: present
+
+    - name: "[9/9] Install Grafana"
+      apt:
+        name: grafana
+        state: present
+        update_cache: yes
+
+    - name: "[9/9] Start and enable Grafana service"
+      systemd:
+        name: grafana-server
+        state: started
+        enabled: yes
+
+    # ==========================================================================
+    # VERIFICATION: Print all installed versions
+    # ==========================================================================
+
+    - name: "Verify - Docker version"
+      command: docker --version
+      register: docker_ver
+      changed_when: false
+
+    - name: "Verify - Jenkins status"
+      command: systemctl is-active jenkins
+      register: jenkins_status
+      changed_when: false
+
+    - name: "Verify - Trivy version"
+      command: trivy --version
+      register: trivy_ver
+      changed_when: false
+
+    - name: "Verify - AWS CLI version"
+      command: aws --version
+      register: awscli_ver
+      changed_when: false
+
+    - name: "Verify - kubectl version"
+      command: kubectl version --client --short
+      register: kubectl_ver
+      changed_when: false
+      ignore_errors: true
+
+    - name: "Verify - eksctl version"
+      command: eksctl version
+      register: eksctl_ver
+      changed_when: false
+
+    - name: "Verify - Grafana status"
+      command: systemctl is-active grafana-server
+      register: grafana_status
+      changed_when: false
+
+    - name: "=== INSTALLATION SUMMARY ==="
+      debug:
+        msg:
+          - "Docker    : {{ docker_ver.stdout }}"
+          - "Jenkins   : {{ jenkins_status.stdout }}"
+          - "Trivy     : {{ trivy_ver.stdout.split('\n')[0] }}"
+          - "AWS CLI   : {{ awscli_ver.stdout }}"
+          - "kubectl   : {{ kubectl_ver.stdout | default('installed') }}"
+          - "eksctl    : {{ eksctl_ver.stdout }}"
+          - "Grafana   : {{ grafana_status.stdout }}"
+
