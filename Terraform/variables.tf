@@ -9,6 +9,6 @@ variable "ami_id" {
 }
 
 variable "key_name" {
-  default     = "dddd"
+  default     = "hotstar"
   description = "Name of your existing AWS Key Pair (must already exist in your AWS account)"
 }
