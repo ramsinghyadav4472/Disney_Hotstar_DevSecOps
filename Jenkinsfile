@@ -18,6 +18,11 @@ pipeline{
                 git branch: 'main', url: 'https://github.com/ramsinghyadav4472/Disney_Hotstar_DevSecOps.git'
             }
         }
+        stage('Install Dependencies') {
+            steps {
+                sh "npm install"
+            }
+        }
         stage("Sonarqube Analysis "){
             steps{
                 withSonarQubeEnv('SonarQube') {
@@ -32,11 +37,6 @@ pipeline{
                     waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token' 
                 }
             } 
-        }
-        stage('Install Dependencies') {
-            steps {
-                sh "npm install"
-            }
         }
         stage('OWASP FS SCAN') {
             steps {
@@ -67,7 +67,13 @@ pipeline{
         }
         stage('Deploy to container'){
             steps{
-                sh 'docker run -d --name hotstar -p 3000:3000 aarnav2/hotstar:latest'
+                sh '''
+                    docker rm -f hotstar 2>/dev/null || true
+                    docker run -d --restart unless-stopped \
+                    --name hotstar \
+                    -p 3000:3000 \
+                    aarnav2/hotstar:latest
+                '''
             }
         }
 
