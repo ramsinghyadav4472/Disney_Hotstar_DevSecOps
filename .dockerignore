@@ -1,0 +1,16 @@
+node_modules
+.git
+.gitignore
+.github
+.env
+.env.*
+!.env.example
+
+dependency-check-report.xml
+dependency-check-report.html
+dependency-check-report.json
+
+coverage
+npm-debug.log
+Dockerfile
+.dockerignore
