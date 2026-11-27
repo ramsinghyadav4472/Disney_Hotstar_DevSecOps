@@ -15,7 +15,7 @@ pipeline{
         }
         stage('Checkout from Git'){
             steps{
-                git branch: 'main', credentialsId: 'github-token', url: 'https://github.com/ramsinghyadav4472/Disney_Hotstar_DevSecOps.git'
+                git branch: 'main', url: 'https://github.com/ramsinghyadav4472/Disney_Hotstar_DevSecOps.git'
             }
         }
         stage("Sonarqube Analysis "){
@@ -40,19 +40,19 @@ pipeline{
         }
         stage('OWASP FS SCAN') {
             steps {
-                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit --nvdApiKey d7e8c629-7da9-4f96-8a4a-a45fd3f213ba', odcInstallation: 'DC'
+                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
                 dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
            }
         }
             stage('TRIVY FS SCAN') {
             steps {
-                sh "trivy fs . > trivyfs.txt"
+                sh "trivy fs --config /dev/null . > trivyfs.txt"
             }
         }
         stage("Docker Build & Push"){
             steps{
                 script{
-                   withDockerRegistry(credentialsId: 'docker', toolName: 'docker'){   
+                   withDockerRegistry(credentialsId: 'dockerhub-creds', toolName: 'docker'){   
                        sh "docker build -t hotstar ."
                        sh "docker tag hotstar aarnav2/hotstar:latest "
                        sh "docker push aarnav2/hotstar:latest "
@@ -62,7 +62,7 @@ pipeline{
         }
         stage("TRIVY"){
             steps{
-                sh "trivy image aarnav2/hotstar:latest > trivyimage.txt" 
+                sh "trivy image --config /dev/null aarnav2/hotstar:latest > trivyimage.txt" 
             }
         }
         stage('Deploy to container'){
